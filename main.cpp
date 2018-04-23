@@ -9,9 +9,9 @@ using namespace std;
 
 int main()
 {
-    int const nx=100; //number of lattice nodes in two dimentions
-    int const ny=100;
-    int const nz=100;
+    int const nx=1000; //number of lattice nodes in two dimentions
+    int const ny=40;
+    int const nz=10;
     //int const n=nx*ny*nz;
 
     //double f[nx][ny][nz][27],rho[nx][ny][nz],feq,x[nx],y[ny],z[nz],w[27],cu,rhon;
@@ -22,11 +22,11 @@ int main()
     auto u = new Vector3d[nx][ny][nz];
     Vector3d sumu;
     //double dt=1.0,dy=1.0,dx=dy,dz=dy;
-    double u0=0.1,rho0=5.;
+    double u0=0.2,rho0=5.;
     int i,j,k;
-        int mstep=400;//total number of steps
+        int mstep=1000;//total number of steps
 
-    double alpha=0.01;
+    double alpha=0.02;
     //double Re=u0*nx/alpha;
     double sum;
     //double csq=dx*dx/(dt*dt);
@@ -65,7 +65,6 @@ omp_set_num_threads(4);
 
                 for(k=0;k<27;k++){
                     f[lx][ly][lz][k]=w[k]*rho0;// zero initial velocity
-                    //cout<<f[lx][ly][lz][k]*c[k]<<"\n";
 
 
                    }
@@ -88,8 +87,6 @@ omp_set_num_threads(4);
 
                     for(k=0;k<27;k++){
                         sum=sum+f[lx][ly][lz][k];
-                        auto v=f[lx][ly][lz][k]*c[k];
-                        if (v.mag()>100) cout<<lx<<" "<<f[lx][ly][lz][k]<<"\n";
 
                         sumu=sumu+(f[lx][ly][lz][k])*c[k];
 
@@ -102,7 +99,7 @@ omp_set_num_threads(4);
                 //collision
                     for(k=0;k<27;k++){
                         cu=c[k]*u[lx][ly][lz];
-                        feq=w[k]*rhon*(1+3*cu+4.5*cu*cu-1.5*(u[lx][ly][lz]*u[lx][ly][lz]));
+                        feq=w[k]*rhon*(1+3*cu+4.5*cu*cu-1.5*(u[lx][ly][lz]*u[lx][ly][lz]));//feq=w[k]*rhon*(1+3*cu+4.5*cu*cu-1.5*(u[lx][ly][lz]*u[lx][ly][lz]));
                         f[lx][ly][lz][k]=omega*feq+(1.-omega)*f[lx][ly][lz][k];
                     }
                 }
@@ -137,35 +134,63 @@ omp_set_num_threads(4);
 
 
         //boundary conditions
+// z normal bc
 #pragma omp parallel for private(i,j,rhon)
         for(int l1=0;l1<nx;l1++){
             for(int l2=0;l2<ny;l2++){
                 for(int k1=-1;k1<2;k1++){
                     for(int k2=-1;k2<2;k2++){
-            //x=0 bounce back
-                    f[0][l1][l2][ind(1,k1,k2)]=f[0][l1][l2][ind(-1,-k1,-k2)];
-            //x=l bounce back
-                    f[nx-1][l1][l2][ind(-1,k1,k2)]=f[nx-1][l1][l2][ind(1,-k1,-k2)];
-            //y=0 bounce back
-                    f[l1][0][l2][ind(k1,1,k2)]=f[l1][0][l2][ind(-k1,-1,-k2)];
-            //z=0 bounce back
-                    f[l1][l2][0][ind(k1,k2,1)]=f[l1][l2][0][ind(-k1,-k2,-1)];
-            //z=l bounce back
-                    f[l1][l2][nz-1][ind(k1,k2,-1)]=f[l1][l2][nz-1][ind(-k1,-k2,1)];
+            //z=0 sym
+                    f[l1][l2][0][ind(k1,k2,1)]=f[l1][l2][0][ind(k1,k2,-1)];
+            //z=l sym
+                    f[l1][l2][nz-1][ind(k1,k2,-1)]=f[l1][l2][nz-1][ind(k1,k2,1)];
 
-            //y=l moving lid
-            //rhon=f[i][m-1][ind(0,0)]+f[i][m-1][ind(1,0)]+f[i][m-1][ind(-1,0)]+2.*(f[i][m-1][ind(0,1)]+f[i][m-1][ind(-1,1)]+f[i][m-1][ind(1,1)]);
+                    }
+               }
+           }
 
-                    f[l1][ny-1][l2][ind(k1,-1,k2)]=f[l1][ny-1][l2][ind(k1,1,k2)]-2*w[ind(k1,-1,k2)]*rho0*c[ind(k1,-1,k2)]*Vector3d(u0,0,0)/3.;
+        }
+// x normal bc
+#pragma omp parallel for private(i,j,rhon,k)
+        for(int l1=0;l1<ny;l1++){
+            for(int l2=0;l2<nz;l2++){
+                for(int k1=-1;k1<2;k1++){
+                    for(int k2=-1;k2<2;k2++){
+                        double rho=0;
+                        for(k=0;k<27;k++){
+                            if(c[k]*Vector3d(-1,0,0)>=0){
+                                rho=rho+f[0][l1][l2][k];
+                            }
+                            else{
+                                rho=rho+f[0][l1][l2][ind(-c[k].x,-c[k].x,-c[k].x)];
+                            }
+                        }
+                //x=0 inlet
+                        f[0][l1][l2][ind(1,k1,k2)]=f[0][l1][l2][ind(-1,-k1,-k2)]+3*2*w[ind(1,k1,k2)]*rho*1.25*c[ind(1,k1,k2)]*Vector3d(u0,0,0);
+                //x=l outlet
+                        f[nx-1][l1][l2][ind(-1,k1,k2)]=2*f[nx-2][l1][l2][ind(-1,k1,k2)]-f[nx-3][l1][l2][ind(-1,k1,k2)];
+                    }
+                }
+            }
+        }
+// y normal bc
+#pragma omp parallel for private(i,j,rhon)
+        for(int l1=0;l1<nx;l1++){
+            for(int l2=0;l2<nz;l2++){
+                for(int k1=-1;k1<2;k1++){
+                    for(int k2=-1;k2<2;k2++){
+                //y=0 bounce back
+                        f[l1][0][l2][ind(k1,1,k2)]=f[l1][0][l2][ind(-k1,-1,-k2)];
+                //y=l bounce back
+                        //rhon=f[i][m-1][ind(0,0)]+f[i][m-1][ind(1,0)]+f[i][m-1][ind(-1,0)]+2.*(f[i][m-1][ind(0,1)]+f[i][m-1][ind(-1,1)]+f[i][m-1][ind(1,1)]);
 
-                 }
+                        f[l1][ny-1][l2][ind(k1,-1,k2)]=f[l1][ny-1][l2][ind(-k1,1,-k2)];
+                    }
+                }
             }
         }
 
-    }
-
-    }
-
+}
     std::cout<<   " time on wall: " <<  omp_get_wtime() - wall_timer << "\n";
     //writing results file
     ofstream file;
@@ -174,7 +199,9 @@ omp_set_num_threads(4);
     file<<"X  Y   Z   u   v   w \n";
     for(int lx=0;lx<nx;lx++){
         for(int ly=0;ly<ny;ly++){
-            file<<lx<<"    "<<ly<<" 0   "<<u[lx][ly][nz/2]<<"\n";
+
+            file<<lx<<"    "<<ly<<" 0  "<<u[lx][ly][nz/2]<<"\n";
+
         }
 
     }
