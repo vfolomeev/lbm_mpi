@@ -1,14 +1,40 @@
 #include <iostream>
+#include <string>
 
 #include "fstream"
 #include "math_api.h"
 #include "omp.h"
 #include <time.h>
-
+#include "mpi.h"
 using namespace std;
 
-int main()
+int main(int argc,char *argv[])
 {
+    //Initialize MPI
+    MPI_Comm grid_comm;
+    MPI_Status status;
+    MPI_Datatype MpiVectorType, MpiVectorType2;
+    MPI_Init(&argc, &argv);
+    int mpi_size, mpi_rank,mpi_grid_rank, mpi_up_z,mpi_down_z;
+    MPI_Comm_size(MPI_COMM_WORLD,&mpi_size);
+    int dims[1];        //mpi dimensions
+    int periodic[1];    //mpi dimention periodicity
+    int reorder = 0,  ndims = 1, maxdims = mpi_size;
+    int coordinates[1];
+    int coords[2];
+    MPI_Comm row_comm;
+    dims[0] = mpi_size;
+    periodic[0] = 1;
+    coords[0] = 0;
+    double mpi_w_time=MPI_Wtime();
+//create cartesian topology
+    MPI_Cart_create(MPI_COMM_WORLD, ndims, dims, periodic, reorder, &grid_comm);
+    MPI_Comm_rank(grid_comm, &mpi_rank);
+//    MPI_Cart_coords(grid_comm, mpi_grid_rank, maxdims, coordinates);
+//    cout<<coordinates[0];
+
+
+
     int const nx=1000; //number of lattice nodes in two dimentions
     int const ny=40;
     int const nz=10;
@@ -24,7 +50,7 @@ int main()
     //double dt=1.0,dy=1.0,dx=dy,dz=dy;
     double u0=0.2,rho0=5.;
     int i,j,k;
-        int mstep=1000;//total number of steps
+        int mstep=100;//total number of steps
 
     double alpha=0.02;
     //double Re=u0*nx/alpha;
@@ -134,22 +160,45 @@ omp_set_num_threads(4);
 
 
         //boundary conditions
+// mpi exchange in z direction
+        MPI_Type_vector(9, 1, 3, MPI_DOUBLE, &MpiVectorType);
+        MPI_Type_commit(&MpiVectorType);
+        //The first vector structure selects data with z positive or negative c[k] directions
+        //There are 9 such vectors equaly spaced with the gap=3
+        MPI_Aint sizeofVector;
+        MPI_Type_extent(MpiVectorType,&sizeofVector);
+        MPI_Type_hvector(nx*ny, 1, sizeofVector, MpiVectorType, &MpiVectorType2);
+        MPI_Type_commit(&MpiVectorType2);
+        //The second vector structure uses previous one and selects data with prescribed z coordinate
+        //There data are equaly spaced with the gap =nz*27, nx*ny is the area
+        MPI_Cart_shift(grid_comm,0,1,&mpi_grid_rank,&mpi_up_z);
+
+        MPI_Sendrecv(&f[0][0][nz-1][ind(0,0,1)],1,MpiVectorType2,mpi_up_z,1,&f[0][0][0][ind(0,0,1)],1,MpiVectorType2,mpi_grid_rank,MPI_ANY_TAG,grid_comm,&status);
+        double d1=mpi_grid_rank,c1=d1;
+        MPI_Sendrecv(&d1,1,MPI_DOUBLE,mpi_up_z,1,&c1,1,MPI_DOUBLE,mpi_grid_rank,1,grid_comm,&status);
+
+        MPI_Cart_shift(grid_comm,0,-1,&mpi_grid_rank,&mpi_down_z);
+        MPI_Sendrecv(&f[0][0][0][ind(0,0,-1)],1,MpiVectorType2,mpi_down_z,2,&f[0][0][nz-1][ind(0,0,-1)],1,MpiVectorType2,mpi_grid_rank,MPI_ANY_TAG,grid_comm,&status);
+
+        cout<<c1<<" "<<d1<<"  "<<sizeofVector;
+
+
 // z normal bc
-#pragma omp parallel for private(i,j,rhon)
-        for(int l1=0;l1<nx;l1++){
-            for(int l2=0;l2<ny;l2++){
-                for(int k1=-1;k1<2;k1++){
-                    for(int k2=-1;k2<2;k2++){
-            //z=0 sym
-                    f[l1][l2][0][ind(k1,k2,1)]=f[l1][l2][0][ind(k1,k2,-1)];
-            //z=l sym
-                    f[l1][l2][nz-1][ind(k1,k2,-1)]=f[l1][l2][nz-1][ind(k1,k2,1)];
+//#pragma omp parallel for private(i,j,rhon)
+//        for(int l1=0;l1<nx;l1++){
+//            for(int l2=0;l2<ny;l2++){
+//                for(int k1=-1;k1<2;k1++){
+//                    for(int k2=-1;k2<2;k2++){
+//            //z=0 sym
+//                    f[l1][l2][0][ind(k1,k2,1)]=f[l1][l2][0][ind(k1,k2,-1)];
+//            //z=l sym
+//                    f[l1][l2][nz-1][ind(k1,k2,-1)]=f[l1][l2][nz-1][ind(k1,k2,1)];
 
-                    }
-               }
-           }
+//                    }
+//               }
+//           }
 
-        }
+//        }
 // x normal bc
 #pragma omp parallel for private(i,j,rhon,k)
         for(int l1=0;l1<ny;l1++){
@@ -191,10 +240,14 @@ omp_set_num_threads(4);
         }
 
 }
-    std::cout<<   " time on wall: " <<  omp_get_wtime() - wall_timer << "\n";
+    std::cout<<   " time on wall: " <<  MPI_Wtime() - mpi_w_time << "\n";
     //writing results file
     ofstream file;
-    file.open("D:\\Development\\lbm_mpi\\res.csv",ios::out);
+    string fname="D:\\Development\\lbm_mpi\\res";
+    fname+=std::to_string(mpi_rank);
+    fname+=".csv";
+    cout<<fname.data();
+    file.open(fname,ios::out);
 
     file<<"X  Y   Z   u   v   w \n";
     for(int lx=0;lx<nx;lx++){
@@ -207,4 +260,7 @@ omp_set_num_threads(4);
     }
     file.flush();
     file.close();
+    MPI_Type_free(&MpiVectorType);
+    MPI_Type_free(&MpiVectorType2);
+    MPI_Finalize();
 }
