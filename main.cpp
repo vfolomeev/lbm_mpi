@@ -48,9 +48,9 @@ int main(int argc,char *argv[])
     auto u = new Vector3d[nx][ny][nz];
     Vector3d sumu;
     //double dt=1.0,dy=1.0,dx=dy,dz=dy;
-    double u0=0.2,rho0=5.;
+    double u0=0.05,rho0=5.;
     int i,j,k;
-        int mstep=100;//total number of steps
+        int mstep=300;//total number of steps
 
     double alpha=0.02;
     //double Re=u0*nx/alpha;
@@ -79,7 +79,7 @@ int main(int argc,char *argv[])
     }
 
 
-omp_set_num_threads(4);
+omp_set_num_threads(2);
 
     //initiate solution
 #pragma omp parallel for private(k)
@@ -167,20 +167,26 @@ omp_set_num_threads(4);
         //There are 9 such vectors equaly spaced with the gap=3
         MPI_Aint sizeofVector;
         MPI_Type_extent(MpiVectorType,&sizeofVector);
-        MPI_Type_hvector(nx*ny, 1, sizeofVector, MpiVectorType, &MpiVectorType2);
+        //MPI_Type_vector(nx*ny, 1, nz, MpiVectorType, &MpiVectorType2);
+        MPI_Type_hvector(nx*ny, 1, nz*27*sizeof(double), MpiVectorType, &MpiVectorType2);
         MPI_Type_commit(&MpiVectorType2);
         //The second vector structure uses previous one and selects data with prescribed z coordinate
         //There data are equaly spaced with the gap =nz*27, nx*ny is the area
         MPI_Cart_shift(grid_comm,0,1,&mpi_grid_rank,&mpi_up_z);
-
-        MPI_Sendrecv(&f[0][0][nz-1][ind(0,0,1)],1,MpiVectorType2,mpi_up_z,1,&f[0][0][0][ind(0,0,1)],1,MpiVectorType2,mpi_grid_rank,MPI_ANY_TAG,grid_comm,&status);
+        double *ptr;
+        ptr=&f[0][0][nz-1][ind(-1,-1,1)];
+        ptr+=nz*27;
+        //cout<<f[0][1][nz-1][ind(-1,-1,1)]<<"    "<<*ptr<<"\n";
+        //cout<<f[0][1][nz-1][ind(-1,1,1)]<<"  "<<f[0][1][0][ind(-1,1,1)]<<"\n";
+        MPI_Sendrecv(&f[0][0][nz-1][ind(-1,-1,1)],1,MpiVectorType2,mpi_up_z,1,&f[0][0][0][ind(-1,-1,1)],1,MpiVectorType2,mpi_grid_rank,1,grid_comm,&status);
         double d1=mpi_grid_rank,c1=d1;
-        MPI_Sendrecv(&d1,1,MPI_DOUBLE,mpi_up_z,1,&c1,1,MPI_DOUBLE,mpi_grid_rank,1,grid_comm,&status);
+        //MPI_Sendrecv(&d1,1,MPI_DOUBLE,mpi_up_z,1,&c1,1,MPI_DOUBLE,mpi_grid_rank,1,grid_comm,&status);
+        //cout<<f[0][1][nz-1][ind(-1,1,1)]<<"  "<<f[0][1][0][ind(-1,1,1)]<<"\n";
 
         MPI_Cart_shift(grid_comm,0,-1,&mpi_grid_rank,&mpi_down_z);
-        MPI_Sendrecv(&f[0][0][0][ind(0,0,-1)],1,MpiVectorType2,mpi_down_z,2,&f[0][0][nz-1][ind(0,0,-1)],1,MpiVectorType2,mpi_grid_rank,MPI_ANY_TAG,grid_comm,&status);
+        MPI_Sendrecv(&f[0][0][0][ind(-1,-1,-1)],1,MpiVectorType2,mpi_down_z,2,&f[0][0][nz-1][ind(-1,-1,-1)],1,MpiVectorType2,mpi_grid_rank,2,grid_comm,&status);
 
-        cout<<c1<<" "<<d1<<"  "<<sizeofVector;
+        //cout<<c1<<" "<<d1<<"  "<<sizeofVector<<"\n";
 
 
 // z normal bc
@@ -190,9 +196,11 @@ omp_set_num_threads(4);
 //                for(int k1=-1;k1<2;k1++){
 //                    for(int k2=-1;k2<2;k2++){
 //            //z=0 sym
-//                    f[l1][l2][0][ind(k1,k2,1)]=f[l1][l2][0][ind(k1,k2,-1)];
+//                   // f[l1][l2][0][ind(k1,k2,1)]=f[l1][l2][0][ind(k1,k2,-1)];
+//                      f[l1][l2][0][ind(k1,k2,1)]=f[l1][l2][nz-1][ind(k1,k2,1)];
 //            //z=l sym
-//                    f[l1][l2][nz-1][ind(k1,k2,-1)]=f[l1][l2][nz-1][ind(k1,k2,1)];
+//                   // f[l1][l2][nz-1][ind(k1,k2,-1)]=f[l1][l2][nz-1][ind(k1,k2,1)];
+//                      f[l1][l2][nz-1][ind(k1,k2,-1)]=f[l1][l2][0][ind(k1,k2,-1)];
 
 //                    }
 //               }
