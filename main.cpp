@@ -10,7 +10,7 @@ using namespace std;
 
 int main(int argc,char *argv[])
 {
-    //Initialize MPI
+//Initialize MPI
     MPI_Comm grid_comm;
     MPI_Status status;
     MPI_Datatype MpiVectorType, MpiVectorType2;
@@ -30,13 +30,11 @@ int main(int argc,char *argv[])
 //create cartesian topology
     MPI_Cart_create(MPI_COMM_WORLD, ndims, dims, periodic, reorder, &grid_comm);
     MPI_Comm_rank(grid_comm, &mpi_rank);
-//    MPI_Cart_coords(grid_comm, mpi_grid_rank, maxdims, coordinates);
-//    cout<<coordinates[0];
 
 
 
-    int const nx=1000; //number of lattice nodes in two dimentions
-    int const ny=40;
+    int const nx=280; //number of lattice nodes in two dimentions
+    int const ny=280;
     int const nz=10;
     //int const n=nx*ny*nz;
 
@@ -48,16 +46,38 @@ int main(int argc,char *argv[])
     auto u = new Vector3d[nx][ny][nz];
     Vector3d sumu;
     //double dt=1.0,dy=1.0,dx=dy,dz=dy;
-    double u0=0.05,rho0=5.;
+    double u0=0.05,rho0=1.,G=(1.18e-4);
     int i,j,k;
-        int mstep=300;//total number of steps
+        int mstep=400000;//total number of steps
 
-    double alpha=0.02;
+    double alpha=0.1;
     //double Re=u0*nx/alpha;
     double sum;
     //double csq=dx*dx/(dt*dt);
 
     double omega=1.0/(3.*alpha+0.5);
+//Create MPI data types
+    MPI_Type_vector(9, 1, 3, MPI_DOUBLE, &MpiVectorType);
+    MPI_Type_commit(&MpiVectorType);
+    //The first vector structure selects data with z positive or negative c[k] directions
+    //There are 9 such vectors equaly spaced with the gap=3
+    MPI_Aint sizeofVector;
+    MPI_Type_extent(MpiVectorType,&sizeofVector);
+    //MPI_Type_vector(nx*ny, 1, nz, MpiVectorType, &MpiVectorType2);
+    MPI_Type_hvector(nx*ny, 1, nz*27*sizeof(double), MpiVectorType, &MpiVectorType2);
+    MPI_Type_commit(&MpiVectorType2);
+    //The second vector structure uses previous one and selects data with prescribed z coordinate
+    //There data are equaly spaced with the gap =nz*27, nx*ny is the area
+    MPI_Cart_shift(grid_comm,0,1,&mpi_grid_rank,&mpi_up_z);
+
+
+//results file
+    ofstream file;
+    string fname="E:\\swap\\lbm_mpi\\res";
+    fname+=std::to_string(mpi_rank);
+    fname+=".csv";
+    cout<<fname.data();
+
 // start wall clock
    double wall_timer = omp_get_wtime();
   // clock_t clock_timer = clock();
@@ -79,7 +99,7 @@ int main(int argc,char *argv[])
     }
 
 
-omp_set_num_threads(2);
+omp_set_num_threads(8);
 
     //initiate solution
 #pragma omp parallel for private(k)
@@ -120,12 +140,12 @@ omp_set_num_threads(2);
                     }
                     rhon=sum;
 
-                    u[lx][ly][lz]=sumu*(1/rhon);
+                    u[lx][ly][lz]=(sumu+Vector3d(G,0,0)*(1./omega))*(1/rhon); //Application of forcing;
 
                 //collision
                     for(k=0;k<27;k++){
                         cu=c[k]*u[lx][ly][lz];
-                        feq=w[k]*rhon*(1+3*cu+4.5*cu*cu-1.5*(u[lx][ly][lz]*u[lx][ly][lz]));//feq=w[k]*rhon*(1+3*cu+4.5*cu*cu-1.5*(u[lx][ly][lz]*u[lx][ly][lz]));
+                        feq=w[k]*rhon*(1+3*cu+4.5*cu*cu-1.5*(u[lx][ly][lz]*u[lx][ly][lz]));
                         f[lx][ly][lz][k]=omega*feq+(1.-omega)*f[lx][ly][lz][k];
                     }
                 }
@@ -161,32 +181,15 @@ omp_set_num_threads(2);
 
         //boundary conditions
 // mpi exchange in z direction
-        MPI_Type_vector(9, 1, 3, MPI_DOUBLE, &MpiVectorType);
-        MPI_Type_commit(&MpiVectorType);
-        //The first vector structure selects data with z positive or negative c[k] directions
-        //There are 9 such vectors equaly spaced with the gap=3
-        MPI_Aint sizeofVector;
-        MPI_Type_extent(MpiVectorType,&sizeofVector);
-        //MPI_Type_vector(nx*ny, 1, nz, MpiVectorType, &MpiVectorType2);
-        MPI_Type_hvector(nx*ny, 1, nz*27*sizeof(double), MpiVectorType, &MpiVectorType2);
-        MPI_Type_commit(&MpiVectorType2);
-        //The second vector structure uses previous one and selects data with prescribed z coordinate
-        //There data are equaly spaced with the gap =nz*27, nx*ny is the area
-        MPI_Cart_shift(grid_comm,0,1,&mpi_grid_rank,&mpi_up_z);
-        double *ptr;
-        ptr=&f[0][0][nz-1][ind(-1,-1,1)];
-        ptr+=nz*27;
-        //cout<<f[0][1][nz-1][ind(-1,-1,1)]<<"    "<<*ptr<<"\n";
-        //cout<<f[0][1][nz-1][ind(-1,1,1)]<<"  "<<f[0][1][0][ind(-1,1,1)]<<"\n";
+
         MPI_Sendrecv(&f[0][0][nz-1][ind(-1,-1,1)],1,MpiVectorType2,mpi_up_z,1,&f[0][0][0][ind(-1,-1,1)],1,MpiVectorType2,mpi_grid_rank,1,grid_comm,&status);
         double d1=mpi_grid_rank,c1=d1;
-        //MPI_Sendrecv(&d1,1,MPI_DOUBLE,mpi_up_z,1,&c1,1,MPI_DOUBLE,mpi_grid_rank,1,grid_comm,&status);
-        //cout<<f[0][1][nz-1][ind(-1,1,1)]<<"  "<<f[0][1][0][ind(-1,1,1)]<<"\n";
+
 
         MPI_Cart_shift(grid_comm,0,-1,&mpi_grid_rank,&mpi_down_z);
         MPI_Sendrecv(&f[0][0][0][ind(-1,-1,-1)],1,MpiVectorType2,mpi_down_z,2,&f[0][0][nz-1][ind(-1,-1,-1)],1,MpiVectorType2,mpi_grid_rank,2,grid_comm,&status);
 
-        //cout<<c1<<" "<<d1<<"  "<<sizeofVector<<"\n";
+
 
 
 // z normal bc
@@ -213,19 +216,21 @@ omp_set_num_threads(2);
             for(int l2=0;l2<nz;l2++){
                 for(int k1=-1;k1<2;k1++){
                     for(int k2=-1;k2<2;k2++){
-                        double rho=0;
-                        for(k=0;k<27;k++){
-                            if(c[k]*Vector3d(-1,0,0)>=0){
-                                rho=rho+f[0][l1][l2][k];
-                            }
-                            else{
-                                rho=rho+f[0][l1][l2][ind(-c[k].x,-c[k].x,-c[k].x)];
-                            }
-                        }
+//                        double rho=0;
+//                        for(k=0;k<27;k++){
+//                            if(c[k]*Vector3d(-1,0,0)>=0){
+//                                rho=rho+f[0][l1][l2][k];
+//                            }
+//                            else{
+//                                rho=rho+f[0][l1][l2][ind(-c[k].x,-c[k].x,-c[k].x)];
+//                            }
+//                        }
                 //x=0 inlet
-                        f[0][l1][l2][ind(1,k1,k2)]=f[0][l1][l2][ind(-1,-k1,-k2)]+3*2*w[ind(1,k1,k2)]*rho*1.25*c[ind(1,k1,k2)]*Vector3d(u0,0,0);
+                        //f[0][l1][l2][ind(1,k1,k2)]=f[0][l1][l2][ind(-1,-k1,-k2)]+3*2*w[ind(1,k1,k2)]*rho*1.25*c[ind(1,k1,k2)]*Vector3d(u0,0,0);
+                        f[0][l1][l2][ind(1,k1,k2)]=f[nx-1][l1][l2][ind(1,k1,k2)];//periodic
                 //x=l outlet
-                        f[nx-1][l1][l2][ind(-1,k1,k2)]=2*f[nx-2][l1][l2][ind(-1,k1,k2)]-f[nx-3][l1][l2][ind(-1,k1,k2)];
+                        //f[nx-1][l1][l2][ind(-1,k1,k2)]=2*f[nx-2][l1][l2][ind(-1,k1,k2)]-f[nx-3][l1][l2][ind(-1,k1,k2)];
+                        f[nx-1][l1][l2][ind(-1,k1,k2)]=f[0][l1][l2][ind(-1,k1,k2)];//periodic
                     }
                 }
             }
@@ -246,28 +251,34 @@ omp_set_num_threads(2);
                 }
             }
         }
+        cout<<t<<"\n";
+        cout.flush();
+        if ((t % 100)==0) {
+            cout<<fname;
+            file.open(fname,ios::out);
+            file<<"X  Y   Z   u   v   w \n";
+            for(int lx=0;lx<nx;lx++){
+                for(int ly=0;ly<ny;ly++){
+
+                    file<<lx<<"    "<<ly<<" 0  "<<u[lx][ly][nz/2]<<"\n";
+
+                }
+
+            }
+            file.flush();
+            file.close();
+
+
+        }
 
 }
     std::cout<<   " time on wall: " <<  MPI_Wtime() - mpi_w_time << "\n";
     //writing results file
-    ofstream file;
-    string fname="D:\\Development\\lbm_mpi\\res";
-    fname+=std::to_string(mpi_rank);
-    fname+=".csv";
-    cout<<fname.data();
-    file.open(fname,ios::out);
 
-    file<<"X  Y   Z   u   v   w \n";
-    for(int lx=0;lx<nx;lx++){
-        for(int ly=0;ly<ny;ly++){
 
-            file<<lx<<"    "<<ly<<" 0  "<<u[lx][ly][nz/2]<<"\n";
 
-        }
 
-    }
-    file.flush();
-    file.close();
+
     MPI_Type_free(&MpiVectorType);
     MPI_Type_free(&MpiVectorType2);
     MPI_Finalize();
