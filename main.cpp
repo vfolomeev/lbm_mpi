@@ -6,6 +6,7 @@
 #include "omp.h"
 #include <time.h>
 #include "mpi.h"
+#include <cmath>
 using namespace std;
 
 int main(int argc,char *argv[])
@@ -14,7 +15,9 @@ int main(int argc,char *argv[])
     MPI_Comm grid_comm;
     MPI_Status status;
     MPI_Datatype MpiVectorType, MpiVectorType2;
+    int prov;
     MPI_Init(&argc, &argv);
+    //int ret = MPI_Init_thread(&argc, &argv, MPI_THREAD_SERIALIZED, &prov);
     int mpi_size, mpi_rank,mpi_grid_rank, mpi_up_z,mpi_down_z;
     MPI_Comm_size(MPI_COMM_WORLD,&mpi_size);
     int dims[1];        //mpi dimensions
@@ -24,6 +27,7 @@ int main(int argc,char *argv[])
     int coords[2];
     MPI_Comm row_comm;
     dims[0] = mpi_size;
+    cout<<mpi_size;
     periodic[0] = 1;
     coords[0] = 0;
     double mpi_w_time=MPI_Wtime();
@@ -33,9 +37,9 @@ int main(int argc,char *argv[])
 
 
 
-    int const nx=280; //number of lattice nodes in two dimentions
-    int const ny=280;
-    int const nz=10;
+    int const nx=400; //number of lattice nodes in two dimentions
+    int const ny=240;
+    int const nz=26;
     //int const n=nx*ny*nz;
 
     //double f[nx][ny][nz][27],rho[nx][ny][nz],feq,x[nx],y[ny],z[nz],w[27],cu,rhon;
@@ -46,11 +50,11 @@ int main(int argc,char *argv[])
     auto u = new Vector3d[nx][ny][nz];
     Vector3d sumu;
     //double dt=1.0,dy=1.0,dx=dy,dz=dy;
-    double u0=0.05,rho0=1.,G=(1.18e-4);
+    double u0=0.05,rho0=1.,G=(1.18e-4)/4.;
     int i,j,k;
-        int mstep=400000;//total number of steps
+        int mstep=6e6;//total number of steps
 
-    double alpha=0.1;
+    double alpha=(6./7.)*0.1/2.;
     //double Re=u0*nx/alpha;
     double sum;
     //double csq=dx*dx/(dt*dt);
@@ -68,15 +72,25 @@ int main(int argc,char *argv[])
     MPI_Type_commit(&MpiVectorType2);
     //The second vector structure uses previous one and selects data with prescribed z coordinate
     //There data are equaly spaced with the gap =nz*27, nx*ny is the area
-    MPI_Cart_shift(grid_comm,0,1,&mpi_grid_rank,&mpi_up_z);
 
 
-//results file
+//results and autosave file
     ofstream file;
-    string fname="E:\\swap\\lbm_mpi\\res";
+    ofstream ufile;
+    ofstream bfileOut;
+    ifstream bfileIn;
+    string fname="res";
     fname+=std::to_string(mpi_rank);
+    string fbname=fname;
+    string ufname=fname;
+    ufname+="vel.csv";
+    fbname+=".bin";
     fname+=".csv";
-    cout<<fname.data();
+    int stat_start=8.5e5;
+    double umean[ny],usqrt[ny];
+    for(int ly=0;ly<ny;ly++){
+        umean[ly]=usqrt[ly]=0;
+    }
 
 // start wall clock
    double wall_timer = omp_get_wtime();
@@ -99,7 +113,7 @@ int main(int argc,char *argv[])
     }
 
 
-omp_set_num_threads(8);
+omp_set_num_threads(16);
 
     //initiate solution
 #pragma omp parallel for private(k)
@@ -181,7 +195,7 @@ omp_set_num_threads(8);
 
         //boundary conditions
 // mpi exchange in z direction
-
+        MPI_Cart_shift(grid_comm,0,1,&mpi_grid_rank,&mpi_up_z);
         MPI_Sendrecv(&f[0][0][nz-1][ind(-1,-1,1)],1,MpiVectorType2,mpi_up_z,1,&f[0][0][0][ind(-1,-1,1)],1,MpiVectorType2,mpi_grid_rank,1,grid_comm,&status);
         double d1=mpi_grid_rank,c1=d1;
 
@@ -251,10 +265,18 @@ omp_set_num_threads(8);
                 }
             }
         }
-        cout<<t<<"\n";
-        cout.flush();
+        //cout<<t<<"\n";
+        //cout.flush();
+        //Statistical calculations
+        if (t>=stat_start){
+            for(int ly=0;ly<ny;ly++){
+                umean[ly]+=u[nx/2][ly][nz/2].x;
+                usqrt[ly]+=u[nx/2][ly][nz/2].x*u[nx/2][ly][nz/2].x;
+            }
+        }
         if ((t % 100)==0) {
             cout<<fname;
+            cout<<t<<"\n";
             file.open(fname,ios::out);
             file<<"X  Y   Z   u   v   w \n";
             for(int lx=0;lx<nx;lx++){
@@ -267,9 +289,44 @@ omp_set_num_threads(8);
             }
             file.flush();
             file.close();
+            //Save state
+            bfileOut.open(fbname, ios::out | ios::binary);
+            bfileOut.write((char *) &f, sizeof f);
+            bfileOut.close();
+            //Save statistic velocity plots
+            ufile.open(ufname,ios::out);
+            ufile<<"  Y   u uu' \n";
+            for(int ly=0;ly<ny;ly++){
+
+                    ufile<<ly<<"    "<<umean[ly]/(t-stat_start)<<"  "<<sqrt(abs(usqrt[ly]-umean[ly]*umean[ly])/(t-stat_start))<<"\n";
+
+
+
+            }
+            ufile.flush();
+            ufile.close();
 
 
         }
+//        bfileOut.open(fbname, ios::out | ios::binary);
+//        bfileOut.write((char *) &f, sizeof f);
+//        bfileOut.close();
+//        bfileIn.open(fbname, ios::out | ios::binary);
+//        auto newf=new double[nx][ny][nz][27];
+//        bfileIn.read((char *) &newf, sizeof newf);
+//        bfileIn.close();
+//        for(int lx=0;lx<nx;lx++){
+//            for(int ly=0;ly<ny;ly++){
+//                for(int lz=0;lz<nz;lz++){
+
+//                    for(k=0;k<27;k++){
+//                        cout<<f[lx][ly][lz][k]-newf[lx][ly][lz][k]<<"\n"<<newf[lx][ly][lz][k]<<"\n";//
+
+
+//                       }
+//                 }
+//            }
+//         }
 
 }
     std::cout<<   " time on wall: " <<  MPI_Wtime() - mpi_w_time << "\n";
