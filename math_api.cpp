@@ -4,24 +4,9 @@
 
 //Vector3d
 
-Vector3d operator+(Vector3d a,Vector3d b){
-    double x=a.x+b.x;
-    double y=a.y+b.y;
-    double z=a.z+b.z;
-    return Vector3d(x,y,z);
-}
 
-Vector3d operator*(double a,Vector3d b){
-    return Vector3d(a*b.x,a*b.y,a*b.z);
-}
 
-Vector3d operator*(Vector3d a,double b){
-    return Vector3d(b*a.x,b*a.y,b*a.z);
-}
 
-double operator*(Vector3d a,Vector3d b){
-    return a.x*b.x+a.y*b.y+a.z*b.z;
-}
 
 Vector3d operator>=(Vector3d a,Vector3d b){
     return Vector3d(a.x>=b.x,a.y>=b.y,a.z>=b.z);
